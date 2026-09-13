@@ -1,0 +1,6 @@
+streamlit
+torch
+torchaudio
+librosa
+numpy
+soundfile

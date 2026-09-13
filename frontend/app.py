@@ -1,6 +1,14 @@
 import streamlit as st
-import requests
+import torch
+import torch.nn as nn
+import librosa
+import numpy as np
+import io
 from datetime import datetime
+
+# =========================================================
+# PAGE CONFIG
+# =========================================================
 
 st.set_page_config(
     page_title="VoiceShield AI",
@@ -9,11 +17,18 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-BACKEND_URL = "http://127.0.0.1:8000"
+# =========================================================
+# MODEL PATH
+# =========================================================
+
+MODEL_PATH = "models/cnn_voice_model.pth"
+
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # =========================================================
-# COLOR SYSTEM (pastel green / light theme)
+# COLOR SYSTEM
 # =========================================================
+
 COLORS = {
     "primary": "#78C6A3",
     "primary_dark": "#5FAE8B",
@@ -37,33 +52,25 @@ COLORS = {
 # =========================================================
 # SESSION STATE
 # =========================================================
+
 if "nav" not in st.session_state:
     st.session_state.nav = "Dashboard"
 
 if "history" not in st.session_state:
     st.session_state.history = []
 
-
 # =========================================================
 # GLOBAL CSS
 # =========================================================
+
 st.markdown(
     f"""
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-
 <style>
-
-/* =========================================================
-   BASE
-   ========================================================= */
 
 html, body, [class*="css"] {{
     font-family: 'Plus Jakarta Sans', -apple-system, sans-serif;
 }}
 
-/* Force light rendering regardless of OS/browser dark mode so native
-   controls (radio dots, checkboxes, scrollbars) never fall back to dark. */
 html, body, .stApp {{
     color-scheme: light !important;
     background: {COLORS['bg']} !important;
@@ -87,14 +94,11 @@ html, body, .stApp {{
     max-width: 1200px;
 }}
 
-/* Default body text everywhere should be dark & readable on the light bg */
 p, span, li, label, div, h1, h2, h3, h4, h5, h6 {{
     color: {COLORS['text']};
 }}
 
-/* =========================================================
-   SIDEBAR
-   ========================================================= */
+/* SIDEBAR */
 
 [data-testid="stSidebar"] {{
     background: linear-gradient(180deg, #FFFFFF 0%, {COLORS['bg']} 100%) !important;
@@ -164,9 +168,7 @@ p, span, li, label, div, h1, h2, h3, h4, h5, h6 {{
     color: {COLORS['text_sub']} !important;
 }}
 
-/* =========================================================
-   RADIO GROUPS (sidebar nav + upload/record mode selector)
-   ========================================================= */
+/* RADIO */
 
 div[role="radiogroup"] {{
     gap: 4px;
@@ -177,7 +179,6 @@ div[role="radiogroup"] {{
     flex-direction: column;
 }}
 
-/* main-area radio (mode selector) should stay horizontal */
 .block-container div[role="radiogroup"] {{
     flex-direction: row;
 }}
@@ -217,14 +218,7 @@ input[type="radio"], input[type="checkbox"] {{
     accent-color: {COLORS['primary']} !important;
 }}
 
-/* the little circular indicator baseweb draws */
-div[role="radiogroup"] label > div:first-child {{
-    border-color: {COLORS['primary']} !important;
-}}
-
-/* =========================================================
-   TOP HEADER
-   ========================================================= */
+/* TOP HEADER */
 
 .topbar {{
     display: flex;
@@ -267,18 +261,14 @@ div[role="radiogroup"] label > div:first-child {{
     color: {COLORS['safe_text']} !important;
     border-color: {COLORS['secondary']};
 }}
-.status-online * {{ color: {COLORS['safe_text']} !important; }}
 
 .status-offline {{
     background: {COLORS['danger_bg']};
     color: {COLORS['danger_text']} !important;
     border-color: {COLORS['danger_border']};
 }}
-.status-offline * {{ color: {COLORS['danger_text']} !important; }}
 
-/* =========================================================
-   GENERIC SURFACES / CARDS / SECTIONS
-   ========================================================= */
+/* CARDS */
 
 .card {{
     background: {COLORS['card']};
@@ -287,7 +277,10 @@ div[role="radiogroup"] label > div:first-child {{
     border: 1px solid {COLORS['border']};
     box-shadow: 0 2px 10px rgba(25, 53, 42, 0.04);
 }}
-.card, .card * {{ color: {COLORS['text']} !important; }}
+
+.card, .card * {{
+    color: {COLORS['text']} !important;
+}}
 
 .section-title {{
     font-size: 18px;
@@ -296,9 +289,7 @@ div[role="radiogroup"] label > div:first-child {{
     margin: 26px 0 12px 0;
 }}
 
-/* =========================================================
-   KPI / METRIC CARDS
-   ========================================================= */
+/* METRIC CARDS */
 
 .metric-card {{
     background: {COLORS['card']};
@@ -308,7 +299,10 @@ div[role="radiogroup"] label > div:first-child {{
     box-shadow: 0 2px 10px rgba(25, 53, 42, 0.04);
     transition: transform 180ms ease, box-shadow 180ms ease;
 }}
-.metric-card, .metric-card * {{ color: {COLORS['text']} !important; }}
+
+.metric-card, .metric-card * {{
+    color: {COLORS['text']} !important;
+}}
 
 .metric-card:hover {{
     transform: translateY(-2px);
@@ -348,9 +342,7 @@ div[role="radiogroup"] label > div:first-child {{
     color: {COLORS['text_sub']} !important;
 }}
 
-/* =========================================================
-   RISK RESULT BOXES
-   ========================================================= */
+/* RISK BOXES */
 
 .danger {{
     background: {COLORS['danger_bg']};
@@ -358,8 +350,15 @@ div[role="radiogroup"] label > div:first-child {{
     padding: 22px;
     border-radius: 18px;
 }}
-.danger, .danger p, .danger li, .danger b {{ color: {COLORS['danger_text']} !important; }}
-.danger h3 {{ color: {COLORS['danger_text']} !important; margin-top: 0; }}
+
+.danger, .danger p, .danger li, .danger b {{
+    color: {COLORS['danger_text']} !important;
+}}
+
+.danger h3 {{
+    color: {COLORS['danger_text']} !important;
+    margin-top: 0;
+}}
 
 .warning {{
     background: {COLORS['warning_bg']};
@@ -367,8 +366,15 @@ div[role="radiogroup"] label > div:first-child {{
     padding: 22px;
     border-radius: 18px;
 }}
-.warning, .warning p, .warning li, .warning b {{ color: {COLORS['warning_text']} !important; }}
-.warning h3 {{ color: {COLORS['warning_text']} !important; margin-top: 0; }}
+
+.warning, .warning p, .warning li, .warning b {{
+    color: {COLORS['warning_text']} !important;
+}}
+
+.warning h3 {{
+    color: {COLORS['warning_text']} !important;
+    margin-top: 0;
+}}
 
 .safe {{
     background: {COLORS['safe_bg']};
@@ -376,8 +382,15 @@ div[role="radiogroup"] label > div:first-child {{
     padding: 22px;
     border-radius: 18px;
 }}
-.safe, .safe p, .safe li, .safe b {{ color: {COLORS['safe_text']} !important; }}
-.safe h3 {{ color: {COLORS['safe_text']} !important; margin-top: 0; }}
+
+.safe, .safe p, .safe li, .safe b {{
+    color: {COLORS['safe_text']} !important;
+}}
+
+.safe h3 {{
+    color: {COLORS['safe_text']} !important;
+    margin-top: 0;
+}}
 
 .blocked {{
     background: {COLORS['danger_bg']};
@@ -388,7 +401,10 @@ div[role="radiogroup"] label > div:first-child {{
     font-size: 18px;
     font-weight: 700;
 }}
-.blocked, .blocked * {{ color: {COLORS['danger_text']} !important; }}
+
+.blocked, .blocked * {{
+    color: {COLORS['danger_text']} !important;
+}}
 
 .blockchain {{
     background: {COLORS['card']};
@@ -396,7 +412,10 @@ div[role="radiogroup"] label > div:first-child {{
     padding: 22px;
     border-radius: 18px;
 }}
-.blockchain, .blockchain p, .blockchain b {{ color: {COLORS['text']} !important; }}
+
+.blockchain, .blockchain p, .blockchain b {{
+    color: {COLORS['text']} !important;
+}}
 
 .blockchain code {{
     background: {COLORS['bg']} !important;
@@ -405,9 +424,7 @@ div[role="radiogroup"] label > div:first-child {{
     color: {COLORS['text']} !important;
 }}
 
-/* =========================================================
-   BUTTONS
-   ========================================================= */
+/* BUTTONS */
 
 .stButton > button {{
     background: {COLORS['primary']} !important;
@@ -424,25 +441,9 @@ div[role="radiogroup"] label > div:first-child {{
     background: {COLORS['secondary']} !important;
     color: {COLORS['text']} !important;
     transform: translateY(-1px);
-    box-shadow: 0 6px 16px rgba(120, 198, 163, 0.45);
 }}
 
-.stButton > button:active {{
-    transform: translateY(0px);
-}}
-
-.stButton > button p {{
-    color: {COLORS['text']} !important;
-    font-weight: 700 !important;
-}}
-
-/* =========================================================
-   FILE UPLOADER
-   ========================================================= */
-
-[data-testid="stFileUploader"] {{
-    background: transparent !important;
-}}
+/* FILE UPLOADER */
 
 [data-testid="stFileUploaderDropzone"] {{
     background: {COLORS['card']} !important;
@@ -466,22 +467,12 @@ div[role="radiogroup"] label > div:first-child {{
     font-weight: 700 !important;
 }}
 
-[data-testid="stFileUploaderDropzone"] button * {{
-    color: {COLORS['text']} !important;
-}}
-
 [data-testid="stFileUploaderFile"] {{
     background: {COLORS['accent']} !important;
     border-radius: 10px !important;
 }}
 
-[data-testid="stFileUploaderFile"] * {{
-    color: {COLORS['text']} !important;
-}}
-
-/* =========================================================
-   MICROPHONE RECORDER WIDGET
-   ========================================================= */
+/* AUDIO INPUT */
 
 [data-testid="stAudioInput"] {{
     background: {COLORS['card']} !important;
@@ -490,31 +481,17 @@ div[role="radiogroup"] label > div:first-child {{
     padding: 12px !important;
 }}
 
-[data-testid="stAudioInput"] * {{
-    color: {COLORS['text']} !important;
-    fill: {COLORS['primary']} !important;
-    stroke: {COLORS['primary']} !important;
-}}
-
 [data-testid="stAudioInput"] button {{
     background: {COLORS['primary']} !important;
     border-radius: 50% !important;
 }}
 
-/* waveform / progress line inside the recorder */
-[data-testid="stAudioInput"] canvas {{
-    filter: none !important;
-}}
-
-/* native audio player (playback of uploaded/recorded file) */
 audio {{
     border-radius: 10px;
     background: {COLORS['card']};
 }}
 
-/* =========================================================
-   ALERTS (st.info / st.success / st.warning / st.error)
-   ========================================================= */
+/* ALERTS */
 
 [data-testid="stAlert"] {{
     background: {COLORS['card']} !important;
@@ -526,50 +503,22 @@ audio {{
     color: {COLORS['text']} !important;
 }}
 
-[data-testid="stAlert"] svg {{
-    fill: {COLORS['primary']} !important;
-}}
-
-/* =========================================================
-   PROGRESS BAR
-   ========================================================= */
+/* PROGRESS */
 
 .stProgress > div > div > div {{
     background: {COLORS['border']} !important;
 }}
 
 .stProgress > div > div > div > div {{
-    background-image: linear-gradient(90deg, {COLORS['primary']}, {COLORS['secondary']}) !important;
+    background-image: linear-gradient(
+        90deg,
+        {COLORS['primary']},
+        {COLORS['secondary']}
+    ) !important;
 }}
-
-/* =========================================================
-   DATAFRAME / TABLE
-   ========================================================= */
-
-[data-testid="stDataFrame"] {{
-    border-radius: 14px;
-    overflow: hidden;
-    border: 1px solid {COLORS['border']};
-}}
-
-[data-testid="stDataFrame"] * {{
-    color: {COLORS['text']} !important;
-}}
-
-/* =========================================================
-   MISC
-   ========================================================= */
 
 hr {{
     border-color: {COLORS['border']} !important;
-}}
-
-.stSpinner > div {{
-    color: {COLORS['text']} !important;
-}}
-
-.stSpinner > div > div {{
-    border-top-color: {COLORS['primary']} !important;
 }}
 
 </style>
@@ -577,23 +526,160 @@ hr {{
     unsafe_allow_html=True,
 )
 
+# =========================================================
+# CNN MODEL
+# =========================================================
+
+
+class VoiceCNN(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+
+        self.features = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=3, padding=1),
+            nn.BatchNorm2d(16),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Conv2d(16, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+        )
+
+        self.pool = nn.AdaptiveAvgPool2d((1, 1))
+
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(32, 2),
+        )
+
+    def forward(self, x):
+
+        x = self.features(x)
+        x = self.pool(x)
+        x = self.classifier(x)
+
+        return x
+
+
+@st.cache_resource
+def load_model():
+
+    model = VoiceCNN()
+
+    checkpoint = torch.load(MODEL_PATH, map_location=DEVICE)
+
+    if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
+        model.load_state_dict(checkpoint["state_dict"])
+    else:
+        model.load_state_dict(checkpoint)
+
+    model.to(DEVICE)
+    model.eval()
+
+    return model
+
 
 # =========================================================
-# BACKEND HEALTH CHECK
+# AUDIO FEATURE EXTRACTION
 # =========================================================
-def check_backend():
-    try:
-        r = requests.get(f"{BACKEND_URL}/health", timeout=3)
-        return r.status_code == 200
-    except Exception:
-        return False
 
 
-backend_online = check_backend()
+def extract_mel_spectrogram(audio_bytes):
+
+    audio, sr = librosa.load(io.BytesIO(audio_bytes), sr=16000, mono=True)
+
+    target_length = 16000 * 4
+
+    if len(audio) < target_length:
+
+        audio = np.pad(audio, (0, target_length - len(audio)))
+
+    else:
+
+        audio = audio[:target_length]
+
+    mel = librosa.feature.melspectrogram(
+        y=audio, sr=16000, n_fft=1024, hop_length=256, n_mels=64, power=2.0
+    )
+
+    mel = librosa.power_to_db(mel, ref=np.max)
+
+    mel = (mel - mel.mean()) / (mel.std() + 1e-8)
+
+    tensor = torch.tensor(mel, dtype=torch.float32)
+
+    tensor = tensor.unsqueeze(0)
+    tensor = tensor.unsqueeze(0)
+
+    return tensor.to(DEVICE)
+
+
+# =========================================================
+# AI DETECTION
+# =========================================================
+
+
+def detect_voice(audio_bytes):
+
+    model = load_model()
+
+    features = extract_mel_spectrogram(audio_bytes)
+
+    with torch.no_grad():
+
+        output = model(features)
+
+        probabilities = torch.softmax(output, dim=1)
+
+    bonafide_probability = probabilities[0][0].item() * 100
+
+    spoof_probability = probabilities[0][1].item() * 100
+
+    if spoof_probability < 40:
+        risk_level = "LOW"
+
+    elif spoof_probability < 70:
+        risk_level = "MEDIUM"
+
+    elif spoof_probability < 90:
+        risk_level = "HIGH"
+
+    else:
+        risk_level = "CRITICAL"
+
+    prediction = "SPOOF" if spoof_probability >= 50 else "BONAFIDE"
+
+    if prediction == "SPOOF":
+
+        message = "Possible voice cloning or synthetic speech detected."
+
+    else:
+
+        message = "Voice appears consistent with authentic speech."
+
+    return {
+        "prediction": prediction,
+        "risk_score": spoof_probability,
+        "risk_level": risk_level,
+        "bonafide_probability": bonafide_probability,
+        "spoof_probability": spoof_probability,
+        "message": message,
+        "device": str(DEVICE),
+    }
+
 
 # =========================================================
 # SIDEBAR
 # =========================================================
+
 with st.sidebar:
 
     st.markdown(
@@ -618,6 +704,7 @@ with st.sidebar:
         label_visibility="collapsed",
         key="nav_radio",
     )
+
     st.session_state.nav = (
         "Dashboard" if nav_choice == "🏠 Dashboard" else "Voice Analysis"
     )
@@ -630,11 +717,17 @@ with st.sidebar:
         """
         <div class="sidebar-info-box">
         <b>AI Engine</b><br>CNN Voice Spoof Detection<br><br>
+
         <b>Features</b><br>Mel Spectrogram<br><br>
+
         <b>Risk Engine</b><br>Low / Medium / High / Critical<br><br>
+
         <b>Prevention</b><br>Sensitive Action Blocking<br><br>
+
         <b>Audit</b><br>Blockchain<br><br>
-        <b>Privacy</b><br>Raw audio is not stored on blockchain.
+
+        <b>Privacy</b><br>
+        Raw audio is not stored on blockchain.
         </div>
         """,
         unsafe_allow_html=True,
@@ -643,12 +736,10 @@ with st.sidebar:
 # =========================================================
 # TOP HEADER
 # =========================================================
-page_title = "Dashboard" if st.session_state.nav == "Dashboard" else "Voice Analysis"
-crumb = f"VoiceShield AI  ›  {page_title}"
 
-status_class = "status-online" if backend_online else "status-offline"
-status_dot = "🟢" if backend_online else "🔴"
-status_text = "Backend Online" if backend_online else "Backend Offline"
+page_title = "Dashboard" if st.session_state.nav == "Dashboard" else "Voice Analysis"
+
+crumb = f"VoiceShield AI  ›  {page_title}"
 
 st.markdown(
     f"""
@@ -657,24 +748,31 @@ st.markdown(
             <div class="crumb">{crumb}</div>
             <h1>{page_title}</h1>
         </div>
-        <div class="status-pill {status_class}">{status_dot} {status_text}</div>
+
+        <div class="status-pill status-online">
+            🟢 AI Engine Online
+        </div>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
 # =========================================================
-# DASHBOARD PAGE
+# DASHBOARD
 # =========================================================
+
 if st.session_state.nav == "Dashboard":
 
     st.markdown(
         """
         <div class="card" style="margin-bottom:22px;">
-            <div style="font-size:20px; font-weight:800;">Welcome back 👋</div>
+            <div style="font-size:20px; font-weight:800;">
+                Welcome back 👋
+            </div>
+
             <div style="margin-top:6px;">
-                Monitor voice authenticity in real time and keep sensitive actions protected
-                from synthetic voice attacks.
+                Monitor voice authenticity in real time and keep
+                sensitive actions protected from synthetic voice attacks.
             </div>
         </div>
         """,
@@ -682,16 +780,21 @@ if st.session_state.nav == "Dashboard":
     )
 
     history = st.session_state.history
+
     total_scans = len(history)
+
     high_risk_count = len(
         [h for h in history if h["risk_level"] in ("HIGH", "CRITICAL")]
     )
-    audited_count = len([h for h in history if h.get("audited")])
+
+    audited_count = 0
+
     last_risk = history[-1]["risk_level"] if history else "—"
 
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
+
         st.markdown(
             f"""
             <div class="metric-card">
@@ -705,6 +808,7 @@ if st.session_state.nav == "Dashboard":
         )
 
     with col2:
+
         st.markdown(
             f"""
             <div class="metric-card">
@@ -718,6 +822,7 @@ if st.session_state.nav == "Dashboard":
         )
 
     with col3:
+
         st.markdown(
             f"""
             <div class="metric-card">
@@ -731,6 +836,7 @@ if st.session_state.nav == "Dashboard":
         )
 
     with col4:
+
         st.markdown(
             f"""
             <div class="metric-card">
@@ -748,26 +854,36 @@ if st.session_state.nav == "Dashboard":
     )
 
     if history:
+
         table_rows = [
             {
                 "Time": h["time"],
                 "Prediction": h["prediction"],
                 "Risk Level": h["risk_level"],
                 "Risk Score": h["risk_score"],
-                "Audited": "✅" if h.get("audited") else "—",
+                "Audited": "—",
             }
             for h in reversed(history)
         ]
+
         st.dataframe(table_rows, use_container_width=True, hide_index=True)
+
     else:
+
         st.markdown(
-            '<div class="card" style="text-align:center;">No scans yet. Run your first voice analysis to see activity here.</div>',
+            """
+            <div class="card" style="text-align:center;">
+                No scans yet. Run your first voice analysis
+                to see activity here.
+            </div>
+            """,
             unsafe_allow_html=True,
         )
 
 # =========================================================
-# VOICE ANALYSIS PAGE
+# VOICE ANALYSIS
 # =========================================================
+
 else:
 
     st.markdown(
@@ -784,6 +900,10 @@ else:
     audio_filename = None
     audio_type = None
 
+    # =====================================================
+    # UPLOAD
+    # =====================================================
+
     if mode == "📁 Upload Audio":
 
         uploaded_file = st.file_uploader(
@@ -791,10 +911,18 @@ else:
         )
 
         if uploaded_file is not None:
+
             audio_bytes = uploaded_file.getvalue()
+
             audio_filename = uploaded_file.name
+
             audio_type = uploaded_file.type
+
             st.audio(audio_bytes, format=audio_type)
+
+    # =====================================================
+    # MICROPHONE
+    # =====================================================
 
     else:
 
@@ -803,11 +931,20 @@ else:
         recorded_audio = st.audio_input("Start recording")
 
         if recorded_audio is not None:
+
             audio_bytes = recorded_audio.getvalue()
+
             audio_filename = "live_voice.wav"
+
             audio_type = "audio/wav"
+
             st.success("✅ Voice recording captured.")
+
             st.audio(audio_bytes, format="audio/wav")
+
+    # =====================================================
+    # ANALYSIS
+    # =====================================================
 
     if audio_bytes is not None:
 
@@ -818,234 +955,309 @@ else:
             with st.spinner("🤖 AI is analyzing the voice..."):
 
                 try:
-                    response = requests.post(
-                        f"{BACKEND_URL}/detect",
-                        files={"file": (audio_filename, audio_bytes, audio_type)},
-                        timeout=120,
+
+                    result = detect_voice(audio_bytes)
+
+                    prediction = result["prediction"]
+
+                    risk_score = result["risk_score"]
+
+                    risk_level = result["risk_level"]
+
+                    bonafide = result["bonafide_probability"]
+
+                    spoof = result["spoof_probability"]
+
+                    st.session_state.history.append(
+                        {
+                            "time": datetime.now().strftime("%H:%M:%S"),
+                            "prediction": prediction,
+                            "risk_level": risk_level,
+                            "risk_score": f"{risk_score:.2f}",
+                        }
                     )
 
-                    if response.status_code != 200:
-                        st.error("Detection failed. Check FastAPI backend.")
+                    st.toast("Analysis complete", icon="✅")
+
+                    # =====================================
+                    # AI RESULT
+                    # =====================================
+
+                    st.markdown(
+                        '<div class="section-title">' "🤖 AI Detection Result" "</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                    col1, col2, col3, col4 = st.columns(4)
+
+                    with col1:
+
+                        st.markdown(
+                            f"""
+                            <div class="metric-card">
+                            <div class="metric-title">
+                            Prediction
+                            </div>
+                            <div class="metric-value">
+                            {prediction}
+                            </div>
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+
+                    with col2:
+
+                        st.markdown(
+                            f"""
+                            <div class="metric-card">
+                            <div class="metric-title">
+                            Risk Score
+                            </div>
+                            <div class="metric-value">
+                            {risk_score:.2f}
+                            </div>
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+
+                    with col3:
+
+                        st.markdown(
+                            f"""
+                            <div class="metric-card">
+                            <div class="metric-title">
+                            Risk Level
+                            </div>
+                            <div class="metric-value">
+                            {risk_level}
+                            </div>
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+
+                    with col4:
+
+                        st.markdown(
+                            f"""
+                            <div class="metric-card">
+                            <div class="metric-title">
+                            AI Device
+                            </div>
+                            <div class="metric-value">
+                            {DEVICE.type.upper()}
+                            </div>
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+
+                    # =====================================
+                    # CONFIDENCE
+                    # =====================================
+
+                    st.markdown(
+                        '<div class="section-title">'
+                        "📊 Detection Confidence"
+                        "</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+
+                        st.write(f"**Bonafide Probability:** " f"{bonafide:.2f}%")
+
+                        st.progress(min(bonafide / 100, 1.0))
+
+                    with col2:
+
+                        st.write(f"**Spoof Probability:** " f"{spoof:.2f}%")
+
+                        st.progress(min(spoof / 100, 1.0))
+
+                    st.info(result["message"])
+
+                    # =====================================
+                    # PREVENTION
+                    # =====================================
+
+                    st.markdown("---")
+
+                    st.markdown(
+                        '<div class="section-title">' "🛡️ Security Action" "</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                    if risk_level in ["HIGH", "CRITICAL"]:
+
+                        st.markdown(
+                            """
+                            <div class="danger">
+
+                            <h3>
+                            🚨 HIGH-RISK VOICE DETECTED
+                            </h3>
+
+                            <p>
+                            The AI model detected characteristics
+                            consistent with synthetic or manipulated speech.
+                            </p>
+
+                            <b>
+                            Recommended Security Action:
+                            </b>
+
+                            <ul>
+                            <li>Block sensitive action</li>
+                            <li>Require secondary verification</li>
+                            <li>Verify caller through trusted channel</li>
+                            <li>Escalate incident if required</li>
+                            </ul>
+
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+
+                        st.markdown(
+                            """
+                            <div class="blocked">
+
+                            🚫 SENSITIVE ACTION BLOCKED
+
+                            <br>
+
+                            <small>
+                            Secondary verification required
+                            before proceeding.
+                            </small>
+
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+
+                    elif risk_level == "MEDIUM":
+
+                        st.markdown(
+                            """
+                            <div class="warning">
+
+                            <h3>
+                            ⚠️ MEDIUM-RISK VOICE
+                            </h3>
+
+                            <p>
+                            Additional verification is recommended
+                            before sensitive actions.
+                            </p>
+
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
 
                     else:
-                        result = response.json()
 
-                        prediction = result["prediction"]
-                        risk_score = result["risk_score"]
-                        risk_level = result["risk_level"]
-                        bonafide = result["bonafide_probability"]
-                        spoof = result["spoof_probability"]
-                        blockchain = result["blockchain"]
-
-                        st.session_state.history.append(
-                            {
-                                "time": datetime.now().strftime("%H:%M:%S"),
-                                "prediction": prediction,
-                                "risk_level": risk_level,
-                                "risk_score": f"{risk_score:.2f}",
-                                "audited": blockchain["blockchain_status"]
-                                == "RECORDED",
-                            }
-                        )
-
-                        st.toast("Analysis complete", icon="✅")
-
-                        # =========================
-                        # AI RESULT
-                        # =========================
                         st.markdown(
-                            '<div class="section-title">🤖 AI Detection Result</div>',
+                            """
+                            <div class="safe">
+
+                            <h3>
+                            ✅ LOW-RISK VOICE
+                            </h3>
+
+                            <p>
+                            No significant spoofing risk detected.
+                            </p>
+
+                            </div>
+                            """,
                             unsafe_allow_html=True,
                         )
 
-                        col1, col2, col3, col4 = st.columns(4)
+                    # =====================================
+                    # BLOCKCHAIN
+                    # =====================================
 
-                        with col1:
-                            st.markdown(
-                                f"""
-                                <div class="metric-card">
-                                <div class="metric-title">Prediction</div>
-                                <div class="metric-value">{prediction}</div>
-                                </div>
-                                """,
-                                unsafe_allow_html=True,
-                            )
+                    st.markdown("---")
 
-                        with col2:
-                            st.markdown(
-                                f"""
-                                <div class="metric-card">
-                                <div class="metric-title">Risk Score</div>
-                                <div class="metric-value">{risk_score:.2f}</div>
-                                </div>
-                                """,
-                                unsafe_allow_html=True,
-                            )
+                    st.markdown(
+                        '<div class="section-title">' "⛓️ Blockchain Audit" "</div>",
+                        unsafe_allow_html=True,
+                    )
 
-                        with col3:
-                            st.markdown(
-                                f"""
-                                <div class="metric-card">
-                                <div class="metric-title">Risk Level</div>
-                                <div class="metric-value">{risk_level}</div>
-                                </div>
-                                """,
-                                unsafe_allow_html=True,
-                            )
+                    st.markdown(
+                        """
+                        <div class="blockchain">
 
-                        with col4:
-                            st.markdown(
-                                f"""
-                                <div class="metric-card">
-                                <div class="metric-title">AI Device</div>
-                                <div class="metric-value">{result["device"].upper()}</div>
-                                </div>
-                                """,
-                                unsafe_allow_html=True,
-                            )
+                        <h3>
+                        ⛓️ Blockchain Audit
+                        </h3>
 
-                        # =========================
-                        # CONFIDENCE
-                        # =========================
-                        st.markdown(
-                            '<div class="section-title">📊 Detection Confidence</div>',
-                            unsafe_allow_html=True,
-                        )
+                        <p>
+                        <b>Status:</b>
+                        Local blockchain audit is disabled
+                        in the cloud deployment.
+                        </p>
 
-                        col1, col2 = st.columns(2)
+                        <p>
+                        The AI detection engine is running
+                        directly on Streamlit Cloud.
+                        </p>
 
-                        with col1:
-                            st.write(f"**Bonafide Probability:** {bonafide:.2f}%")
-                            st.progress(min(bonafide / 100, 1.0))
+                        <p>
+                        Raw audio is NOT stored on blockchain.
+                        </p>
 
-                        with col2:
-                            st.write(f"**Spoof Probability:** {spoof:.2f}%")
-                            st.progress(min(spoof / 100, 1.0))
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
 
-                        st.info(result["message"])
+                    # =====================================
+                    # PIPELINE
+                    # =====================================
 
-                        # =========================
-                        # PREVENTION
-                        # =========================
-                        st.markdown("---")
-                        st.markdown(
-                            '<div class="section-title">🛡️ Security Action</div>',
-                            unsafe_allow_html=True,
-                        )
+                    st.markdown("---")
+
+                    st.markdown(
+                        '<div class="section-title">' "🔐 Security Pipeline" "</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                    c1, c2, c3, c4 = st.columns(4)
+
+                    with c1:
+
+                        st.success("🎙️ Voice Input")
+
+                    with c2:
+
+                        st.info("🤖 AI Detection")
+
+                    with c3:
 
                         if risk_level in ["HIGH", "CRITICAL"]:
 
-                            st.markdown(
-                                """
-                                <div class="danger">
-                                <h3>🚨 HIGH-RISK VOICE DETECTED</h3>
-                                <p>The AI model detected characteristics consistent with synthetic or manipulated speech.</p>
-                                <b>Recommended Security Action:</b>
-                                <ul>
-                                <li>Block sensitive action</li>
-                                <li>Require secondary verification</li>
-                                <li>Verify caller through trusted channel</li>
-                                <li>Escalate incident if required</li>
-                                </ul>
-                                </div>
-                                """,
-                                unsafe_allow_html=True,
-                            )
-
-                            st.markdown(
-                                """
-                                <div class="blocked">
-                                🚫 SENSITIVE ACTION BLOCKED
-                                <br>
-                                <small>Secondary verification required before proceeding.</small>
-                                </div>
-                                """,
-                                unsafe_allow_html=True,
-                            )
-
-                        elif risk_level == "MEDIUM":
-
-                            st.markdown(
-                                """
-                                <div class="warning">
-                                <h3>⚠️ MEDIUM-RISK VOICE</h3>
-                                <p>Additional verification is recommended before sensitive actions.</p>
-                                </div>
-                                """,
-                                unsafe_allow_html=True,
-                            )
+                            st.error("🚫 Action Blocked")
 
                         else:
 
-                            st.markdown(
-                                """
-                                <div class="safe">
-                                <h3>✅ LOW-RISK VOICE</h3>
-                                <p>No significant spoofing risk detected.</p>
-                                </div>
-                                """,
-                                unsafe_allow_html=True,
-                            )
+                            st.success("✅ Action Allowed")
 
-                        # =========================
-                        # BLOCKCHAIN
-                        # =========================
-                        st.markdown("---")
-                        st.markdown(
-                            '<div class="section-title">⛓️ Blockchain Audit</div>',
-                            unsafe_allow_html=True,
-                        )
+                    with c4:
 
-                        if blockchain["blockchain_status"] == "RECORDED":
-
-                            st.markdown(
-                                f"""
-                                <div class="blockchain">
-                                <h3>✅ Audit Successfully Recorded</h3>
-                                <p><b>Audit ID:</b> {blockchain["audit_id"]}</p>
-                                <p><b>Status:</b> RECORDED</p>
-                                <p><b>Audio SHA-256:</b><br><code>{blockchain["audio_hash"]}</code></p>
-                                <p><b>Transaction Hash:</b><br><code>{blockchain["transaction_hash"]}</code></p>
-                                <p>Raw audio is NOT stored on blockchain. Only cryptographic hash and detection metadata are recorded.</p>
-                                </div>
-                                """,
-                                unsafe_allow_html=True,
-                            )
-
-                        else:
-                            st.warning("Blockchain audit not recorded.")
-
-                        # =========================
-                        # PIPELINE
-                        # =========================
-                        st.markdown("---")
-                        st.markdown(
-                            '<div class="section-title">🔐 Security Pipeline</div>',
-                            unsafe_allow_html=True,
-                        )
-
-                        c1, c2, c3, c4 = st.columns(4)
-
-                        with c1:
-                            st.success("🎙️ Voice Input")
-
-                        with c2:
-                            st.info("🤖 AI Detection")
-
-                        with c3:
-                            if risk_level in ["HIGH", "CRITICAL"]:
-                                st.error("🚫 Action Blocked")
-                            else:
-                                st.success("✅ Action Allowed")
-
-                        with c4:
-                            if blockchain["blockchain_status"] == "RECORDED":
-                                st.success("⛓️ Audit Recorded")
-                            else:
-                                st.warning("⚠️ Audit Pending")
+                        st.warning("⛓️ Cloud Audit")
 
                 except Exception as e:
-                    st.error(f"Connection error: {str(e)}")
+
+                    st.error(f"AI Detection Error: {str(e)}")
 
     else:
+
         st.info("👆 Upload audio or record your voice to begin.")
