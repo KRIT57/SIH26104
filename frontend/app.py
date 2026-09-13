@@ -374,6 +374,7 @@ hr {{ border-color: {COLORS['border']} !important; }}
 class VoiceCNN(nn.Module):
     def __init__(self):
         super().__init__()
+
         self.network = nn.Sequential(
             nn.Conv2d(1, 16, kernel_size=3, padding=1),
             nn.BatchNorm2d(16),
@@ -383,26 +384,57 @@ class VoiceCNN(nn.Module):
             nn.BatchNorm2d(32),
             nn.ReLU(),
             nn.MaxPool2d(2),
-            nn.Conv2d(32, 2, kernel_size=3, padding=1),
-            nn.BatchNorm2d(2),
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+        )
+
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            nn.LazyLinear(32),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(32, 2),
         )
 
     def forward(self, x):
         x = self.network(x)
-        x = torch.mean(x, dim=(2, 3))
+        x = self.classifier(x)
         return x
 
 
 @st.cache_resource
 def load_model():
     model = VoiceCNN()
+
     checkpoint = torch.load(MODEL_PATH, map_location=DEVICE)
-    if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
-        model.load_state_dict(checkpoint["state_dict"])
+
+    if isinstance(checkpoint, dict):
+        if "state_dict" in checkpoint:
+            state_dict = checkpoint["state_dict"]
+        elif "model_state_dict" in checkpoint:
+            state_dict = checkpoint["model_state_dict"]
+        else:
+            state_dict = checkpoint
     else:
-        model.load_state_dict(checkpoint)
+        state_dict = checkpoint
+
+    cleaned_state_dict = {}
+    for key, value in state_dict.items():
+        if key.startswith("module."):
+            key = key[7:]
+        cleaned_state_dict[key] = value
+
+    # Initialize LazyLinear using the actual input shape before loading weights.
+    with torch.no_grad():
+        dummy = torch.zeros(1, 1, 64, 251)
+        model.network(dummy)
+        model(dummy)
+
+    model.load_state_dict(cleaned_state_dict, strict=True)
     model.to(DEVICE)
     model.eval()
+
     return model
 
 
