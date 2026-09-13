@@ -1,0 +1,49 @@
+{
+  "_format": "hh3-sol-build-info-1",
+  "id": "solc-0_8_34-4ac4341b10eed23214f2042ea4ad77d0dd142b68",
+  "solcVersion": "0.8.34",
+  "solcLongVersion": "0.8.34+commit.80d5c536",
+  "compilerType": "solc",
+  "toolVersions": {
+    "hardhat": "3.16.0"
+  },
+  "userSourceNameMap": {
+    "contracts/VoiceDetectionAudit.sol": "project/contracts/VoiceDetectionAudit.sol"
+  },
+  "input": {
+    "language": "Solidity",
+    "settings": {
+      "evmVersion": "osaka",
+      "optimizer": {
+        "enabled": true,
+        "runs": 200
+      },
+      "outputSelection": {
+        "*": {
+          "": [
+            "ast"
+          ],
+          "*": [
+            "abi",
+            "evm.bytecode.linkReferences",
+            "evm.bytecode.object",
+            "evm.bytecode.opcodes",
+            "evm.bytecode.sourceMap",
+            "evm.deployedBytecode.immutableReferences",
+            "evm.deployedBytecode.linkReferences",
+            "evm.deployedBytecode.object",
+            "evm.deployedBytecode.opcodes",
+            "evm.deployedBytecode.sourceMap",
+            "evm.methodIdentifiers"
+          ]
+        }
+      },
+      "remappings": []
+    },
+    "sources": {
+      "project/contracts/VoiceDetectionAudit.sol": {
+        "content": "// SPDX-License-Identifier: MIT\r\npragma solidity ^0.8.28;\r\n\r\ncontract VoiceDetectionAudit {\r\n\r\n    struct AuditRecord {\r\n        bytes32 audioHash;\r\n        string prediction;\r\n        uint256 riskScore;\r\n        string riskLevel;\r\n        uint256 timestamp;\r\n        address recorder;\r\n    }\r\n\r\n    uint256 public auditCount;\r\n\r\n    mapping(uint256 => AuditRecord) public audits;\r\n\r\n    event AuditRecorded(\r\n        uint256 indexed auditId,\r\n        bytes32 indexed audioHash,\r\n        string prediction,\r\n        uint256 riskScore,\r\n        string riskLevel,\r\n        uint256 timestamp,\r\n        address recorder\r\n    );\r\n\r\n    function recordAudit(\r\n        bytes32 _audioHash,\r\n        string memory _prediction,\r\n        uint256 _riskScore,\r\n        string memory _riskLevel\r\n    ) public {\r\n\r\n        require(_riskScore <= 100, \"Risk score must be 0-100\");\r\n\r\n        auditCount++;\r\n\r\n        audits[auditCount] = AuditRecord(\r\n            _audioHash,\r\n            _prediction,\r\n            _riskScore,\r\n            _riskLevel,\r\n            block.timestamp,\r\n            msg.sender\r\n        );\r\n\r\n        emit AuditRecorded(\r\n            auditCount,\r\n            _audioHash,\r\n            _prediction,\r\n            _riskScore,\r\n            _riskLevel,\r\n            block.timestamp,\r\n            msg.sender\r\n        );\r\n    }\r\n\r\n    function getAudit(uint256 _auditId)\r\n        public\r\n        view\r\n        returns (\r\n            bytes32 audioHash,\r\n            string memory prediction,\r\n            uint256 riskScore,\r\n            string memory riskLevel,\r\n            uint256 timestamp,\r\n            address recorder\r\n        )\r\n    {\r\n        require(_auditId > 0 && _auditId <= auditCount, \"Audit does not exist\");\r\n\r\n        AuditRecord memory record = audits[_auditId];\r\n\r\n        return (\r\n            record.audioHash,\r\n            record.prediction,\r\n            record.riskScore,\r\n            record.riskLevel,\r\n            record.timestamp,\r\n            record.recorder\r\n        );\r\n    }\r\n}"
+      }
+    }
+  }
+}
