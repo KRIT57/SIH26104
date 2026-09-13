@@ -391,7 +391,7 @@ class VoiceCNN(nn.Module):
 
         self.classifier = nn.Sequential(
             nn.Flatten(),
-            nn.LazyLinear(32),
+            nn.Linear(64, 32),
             nn.ReLU(),
             nn.Dropout(0.3),
             nn.Linear(32, 2),
@@ -399,6 +399,7 @@ class VoiceCNN(nn.Module):
 
     def forward(self, x):
         x = self.network(x)
+        x = torch.mean(x, dim=(2, 3))
         x = self.classifier(x)
         return x
 
@@ -424,12 +425,6 @@ def load_model():
         if key.startswith("module."):
             key = key[7:]
         cleaned_state_dict[key] = value
-
-    # Initialize LazyLinear using the actual input shape before loading weights.
-    with torch.no_grad():
-        dummy = torch.zeros(1, 1, 64, 251)
-        model.network(dummy)
-        model(dummy)
 
     model.load_state_dict(cleaned_state_dict, strict=True)
     model.to(DEVICE)
